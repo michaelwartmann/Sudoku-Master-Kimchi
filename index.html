@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="description" content="Sudoku-Meischter — schwäbisch denke, logisch löse. Learn Sudoku with a Swabian AI teacher.">
+  <title>数独 Sudoku-Meischter</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>数</text></svg>">
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+    }
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      overscroll-behavior: none;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+      background: linear-gradient(170deg, #0f0f23 0%, #1a1a2e 40%, #0d1117 100%);
+      color: #c9d1d9;
+    }
+    #root {
+      height: 100%;
+    }
+    button {
+      font-family: inherit;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    button:active {
+      transform: scale(0.95);
+      transition: transform 0.05s;
+    }
+    /* Prevent zoom on double-tap for iOS */
+    button, input, select, textarea {
+      font-size: 16px;
+    }
+    /* Scrollbar styling for message panel */
+    .messages::-webkit-scrollbar { width: 3px; }
+    .messages::-webkit-scrollbar-track { background: transparent; }
+    .messages::-webkit-scrollbar-thumb { background: rgba(255,179,71,0.2); border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useCallback, useEffect, useRef, useMemo } = React;
+
+    // ============================================================
+    // SUDOKU ENGINE
+    // ============================================================
+    const EMPTY = 0;
+
+    function deepCopy(grid) {
+      return grid.map(row => [...row]);
+    }
+
+    function getCandidates(grid, r, c) {
+      if (grid[r][c] !== EMPTY) return new Set();
+      const used = new Set();
+      for (let i = 0; i < 9; i++) {
+        used.add(grid[r][i]);
+        used.add(grid[i][c]);
+      }
+      const br = Math.floor(r / 3) * 3;
+      const bc = Math.floor(c / 3) * 3;
+      for (let i = br; i < br + 3; i++)
+        for (let j = bc; j < bc + 3; j++)
+          used.add(grid[i][j]);
+      const cands = new Set();
+      for (let n = 1; n <= 9; n++) if (!used.has(n)) cands.add(n);
+      return cands;
+    }
+
+    // ============================================================
+    // SCHWÄBISCH FLAVOR
+    // ============================================================
+    const boxNames = [
+      "obe links", "obe Midde", "obe rechts",
+      "Midde links", "genau in dr Midde", "Midde rechts",
+      "unde links", "unde Midde", "unde rechts"
+    ];
+
+    const encouragements = [
+      "Sauber! 👏", "Des isch fei gscheid!", "Jawoll, so goht des!",
+      "Bassd scho!", "Ha, genau!", "Wunderbar gmacht!",
+      "So isch es richtig!", "Du bisch en Fuchs!", "Läuft bei dir!",
+      "Oifach guad!", "So ka mr's macha!", "Alle Achtung!",
+    ];
+
+    const wrongMessages = [
+      "Hmmm, des stimmt net ganz... Gugge nochmal!",
+      "Oi oi oi, des passt net. Probier's nochmal!",
+      "Nee, des isch es net. Schau dir Zeile ond Spalte nochmal a.",
+      "Heiligs Blechle, des goht net da na! 🙈",
+      "Net ganz, aber koi Stress — mir lernet ja!",
+      "Do hots e Häggle... des isch net richtig.",
+    ];
+
+    const hintIntros = [
+      "Gugge mol da → ", "Pass uff, jetzt kommt's → ",
+      "Also, guck her → ", "Do schau → ", "I zeig dr was → ",
+    ];
+
+    function randomPick(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+
+    // ============================================================
+    // STRATEGIES
+    // ============================================================
+    function findNakedSingle(grid) {
+      for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+          if (grid[r][c] !== EMPTY) continue;
+          const cands = getCandidates(grid, r, c);
+          if (cands.size === 1) {
+            const val = [...cands][0];
+            return {
+              row: r, col: c, value: val,
+              strategy: "Naked Single",
+              explanation: `${randomPick(hintIntros)}Zeile ${r+1}, Spalte ${c+1} — do ka bloß noch die ${val} na! Alle andere Zahle send scho in dr Zeile, Spalte oder em Kästle drin. Des nennt mr an **Naked Single**.`,
+              highlight: [{ r, c, type: "target" }],
+            };
+          }
+        }
+      }
+      return null;
+    }
+
+    function findHiddenSingle(grid) {
+      const unitTypes = [
+        { name: "Kästle", nameEn: "box", getUnit: (idx) => {
+          const br = Math.floor(idx/3)*3, bc = (idx%3)*3;
+          const cells = [];
+          for (let i = br; i < br+3; i++) for (let j = bc; j < bc+3; j++) cells.push([i,j]);
+          return cells;
+        }},
+        { name: "Zeile", nameEn: "row", getUnit: (idx) => Array.from({length:9},(_,j)=>[idx,j]) },
+        { name: "Spalte", nameEn: "column", getUnit: (idx) => Array.from({length:9},(_,i)=>[i,idx]) },
+      ];
+
+      for (const { name, nameEn, getUnit } of unitTypes) {
+        for (let idx = 0; idx < 9; idx++) {
+          const cells = getUnit(idx);
+          for (let n = 1; n <= 9; n++) {
+            if (cells.some(([r,c]) => grid[r][c] === n)) continue;
+            const possible = cells.filter(([r,c]) => grid[r][c] === EMPTY && getCandidates(grid,r,c).has(n));
+            if (possible.length === 1) {
+              const [r,c] = possible[0];
+              let unitLabel = nameEn === "box" ? `em Kästle ${boxNames[idx]}`
+                : nameEn === "row" ? `dr Zeile ${r+1}` : `dr Spalte ${c+1}`;
+              return {
+                row: r, col: c, value: n,
+                strategy: "Hidden Single",
+                explanation: `${randomPick(hintIntros)}In ${unitLabel} ka die ${n} bloß an oi Stelle na — ond des isch Zeile ${r+1}, Spalte ${c+1}. Überall sonschd isch die ${n} scho blockiert. Des isch a **Hidden Single**.`,
+                highlight: [
+                  { r, c, type: "target" },
+                  ...cells.filter(([cr,cc]) => !(cr===r && cc===c)).map(([cr,cc]) => ({r:cr, c:cc, type:"unit"})),
+                ],
+              };
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    function findCrossHatch(grid) {
+      const freq = Array(10).fill(0);
+      for (let r = 0; r < 9; r++)
+        for (let c = 0; c < 9; c++)
+          if (grid[r][c] !== EMPTY) freq[grid[r][c]]++;
+
+      const order = Array.from({length:9},(_,i)=>i+1)
+        .filter(n => freq[n] < 9)
+        .sort((a,b) => freq[b] - freq[a]);
+
+      for (const n of order) {
+        for (let box = 0; box < 9; box++) {
+          const br = Math.floor(box/3)*3, bc = (box%3)*3;
+          let hasN = false;
+          for (let i = br; i < br+3; i++)
+            for (let j = bc; j < bc+3; j++)
+              if (grid[i][j] === n) hasN = true;
+          if (hasN) continue;
+          const possible = [];
+          for (let i = br; i < br+3; i++)
+            for (let j = bc; j < bc+3; j++)
+              if (grid[i][j] === EMPTY && getCandidates(grid,i,j).has(n))
+                possible.push([i,j]);
+          if (possible.length === 1) {
+            const [r,c] = possible[0];
+            return {
+              row: r, col: c, value: n,
+              strategy: "Cross-Hatching",
+              explanation: `${randomPick(hintIntros)}Die ${n} kommt scho ${freq[n]}× vor uffm Board. Em Kästle ${boxNames[box]} fehlt se no — ond wenn mr die Zeile ond Spalte abcheckt wo scho a ${n} drin isch, bleibt bloß Zeile ${r+1}, Spalte ${c+1} übrig. Des isch **Cross-Hatching**!`,
+              highlight: [{ r, c, type: "target" }],
+            };
+          }
+        }
+      }
+      return null;
+    }
+
+    function getHint(grid) {
+      return findNakedSingle(grid) || findHiddenSingle(grid) || findCrossHatch(grid) || null;
+    }
+
+    // ============================================================
+    // GENERATOR
+    // ============================================================
+    function hasUniqueSolution(grid) {
+      const g = deepCopy(grid);
+      let count = 0;
+      function solve() {
+        if (count > 1) return;
+        for (let r = 0; r < 9; r++) {
+          for (let c = 0; c < 9; c++) {
+            if (g[r][c] !== EMPTY) continue;
+            const cands = getCandidates(g, r, c);
+            for (const n of cands) {
+              g[r][c] = n;
+              solve();
+              if (count > 1) return;
+              g[r][c] = EMPTY;
+            }
+            return;
+          }
+        }
+        count++;
+      }
+      solve();
+      return count === 1;
+    }
+
+    function generateFullGrid() {
+      const grid = Array.from({length:9}, () => Array(9).fill(EMPTY));
+      function fill(pos) {
+        if (pos === 81) return true;
+        const r = Math.floor(pos/9), c = pos % 9;
+        const nums = [1,2,3,4,5,6,7,8,9];
+        for (let i = nums.length-1; i > 0; i--) {
+          const j = Math.floor(Math.random()*(i+1));
+          [nums[i], nums[j]] = [nums[j], nums[i]];
+        }
+        for (const n of nums) {
+          if (getCandidates(grid, r, c).has(n)) {
+            grid[r][c] = n;
+            if (fill(pos+1)) return true;
+            grid[r][c] = EMPTY;
+          }
+        }
+        return false;
+      }
+      fill(0);
+      return grid;
+    }
+
+    function generatePuzzle(difficulty) {
+      const full = generateFullGrid();
+      const puzzle = deepCopy(full);
+      const target = difficulty === "leicht" ? 38 : difficulty === "mittel" ? 30 : 24;
+      const positions = [];
+      for (let r = 0; r < 9; r++)
+        for (let c = 0; c < 9; c++) positions.push([r,c]);
+      for (let i = positions.length-1; i > 0; i--) {
+        const j = Math.floor(Math.random()*(i+1));
+        [positions[i], positions[j]] = [positions[j], positions[i]];
+      }
+      let given = 81;
+      for (const [r,c] of positions) {
+        if (given <= target) break;
+        const backup = puzzle[r][c];
+        puzzle[r][c] = EMPTY;
+        if (hasUniqueSolution(puzzle)) { given--; }
+        else { puzzle[r][c] = backup; }
+      }
+      return { puzzle, solution: full, given };
+    }
+
+    // ============================================================
+    // COLORS
+    // ============================================================
+    const C = {
+      bg: "#1a1a2e", surface: "#16213e", gridLine: "#1a4a7a",
+      gridBold: "#c9d1d9", cellBg: "#0d1b3e", cellGiven: "#e2e8f0",
+      cellUser: "#7aeccc", cellError: "#ff6b6b", cellSelected: "#1e4d8a",
+      accent: "#64ffda", accentDim: "#2a7a6a", text: "#c9d1d9",
+      textDim: "#6a7a8a", hint: "#ffd93d", swabian: "#ffb347",
+    };
+
+    // ============================================================
+    // GRID CELL
+    // ============================================================
+    function Cell({ r, c, val, isGiven, hasError, sel, sameUnit, sameNum, hlType, candidates, onClick }) {
+      let bgColor = C.cellBg;
+      if (hlType === "target") bgColor = "rgba(255,217,61,0.2)";
+      else if (hlType === "unit") bgColor = "rgba(100,255,218,0.06)";
+      else if (sel) bgColor = C.cellSelected;
+      else if (sameNum && val !== EMPTY) bgColor = "rgba(100,255,218,0.1)";
+      else if (sameUnit) bgColor = "rgba(100,255,218,0.03)";
+
+      return (
+        <div
+          onClick={onClick}
+          onTouchEnd={(e) => { e.preventDefault(); onClick(); }}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: bgColor,
+            borderRight: c === 8 ? "none" : (c%3===2) ? `2px solid ${C.gridBold}` : `0.5px solid ${C.gridLine}`,
+            borderBottom: r === 8 ? "none" : (r%3===2) ? `2px solid ${C.gridBold}` : `0.5px solid ${C.gridLine}`,
+            position: "relative",
+            fontSize: candidates ? "0.5rem" : "clamp(1rem, 5vw, 1.6rem)",
+            fontWeight: isGiven ? 700 : 500,
+            color: hasError ? C.cellError : isGiven ? C.cellGiven : hlType === "target" ? C.hint : C.cellUser,
+            lineHeight: 1,
+            touchAction: "manipulation",
+            transition: "background 0.1s",
+          }}
+        >
+          {val !== EMPTY ? val : candidates ? (
+            <div style={{
+              display: "grid", gridTemplateColumns: "repeat(3,1fr)", gridTemplateRows: "repeat(3,1fr)",
+              width: "88%", height: "88%", alignItems: "center", justifyItems: "center",
+              fontSize: "clamp(0.35rem, 1.8vw, 0.55rem)", color: C.textDim, lineHeight: 1,
+            }}>
+              {[1,2,3,4,5,6,7,8,9].map(n => (
+                <span key={n} style={{ opacity: candidates.has(n) ? 0.7 : 0 }}>{n}</span>
+              ))}
+            </div>
+          ) : null}
+          {sel && <div style={{
+            position: "absolute", inset: 1,
+            border: `2px solid ${C.accent}`, borderRadius: 2, pointerEvents: "none",
+          }} />}
+        </div>
+      );
+    }
+
+    // ============================================================
+    // MAIN APP
+    // ============================================================
+    function SudokuMeischter() {
+      const [game, setGame] = useState(null);
+      const [userGrid, setUserGrid] = useState(null);
+      const [selected, setSelected] = useState(null);
+      const [hint, setHint] = useState(null);
+      const [messages, setMessages] = useState([
+        { text: "Grüß Gott! I bin dein Sudoku-Meischter. 🎓 Fang a neues Schpiel a ond i zeig dr die Strategien wo die Profis verwendet. Drück uff a Feld, gib a Zahl ei, oder frag mi um an **Hinweis**! Des wird sauber!" }
+      ]);
+      const [errors, setErrors] = useState(new Set());
+      const [generating, setGenerating] = useState(false);
+      const [difficulty, setDifficulty] = useState("mittel");
+      const [showCandidates, setShowCandidates] = useState(false);
+      const [hintsUsed, setHintsUsed] = useState(0);
+      const [moveCount, setMoveCount] = useState(0);
+      const [streak, setStreak] = useState(0);
+      const [solved, setSolved] = useState(false);
+      const messagesEndRef = useRef(null);
+      const appRef = useRef(null);
+
+      useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, [messages]);
+
+      // Prevent pull-to-refresh and bounce
+      useEffect(() => {
+        const prevent = (e) => {
+          if (e.target.closest('.messages')) return;
+          e.preventDefault();
+        };
+        document.addEventListener('touchmove', prevent, { passive: false });
+        return () => document.removeEventListener('touchmove', prevent);
+      }, []);
+
+      // Keyboard
+      useEffect(() => {
+        const handler = (e) => {
+          if (!selected || !game || solved) return;
+          const n = parseInt(e.key);
+          if (n >= 1 && n <= 9) handleNumber(n);
+          if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") handleNumber(0);
+          if (e.key === "ArrowUp" && selected.r > 0) setSelected({r:selected.r-1, c:selected.c});
+          if (e.key === "ArrowDown" && selected.r < 8) setSelected({r:selected.r+1, c:selected.c});
+          if (e.key === "ArrowLeft" && selected.c > 0) setSelected({r:selected.r, c:selected.c-1});
+          if (e.key === "ArrowRight" && selected.c < 8) setSelected({r:selected.r, c:selected.c+1});
+          if (e.key === "h" || e.key === "H") requestHint();
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+      });
+
+      const addMessage = useCallback((text) => {
+        setMessages(prev => {
+          const next = [...prev, { text }];
+          return next.length > 30 ? next.slice(-20) : next;
+        });
+      }, []);
+
+      const startGame = useCallback((diff) => {
+        setGenerating(true);
+        setDifficulty(diff);
+        setTimeout(() => {
+          const { puzzle, solution, given } = generatePuzzle(diff);
+          setGame({ puzzle: deepCopy(puzzle), solution, given, original: deepCopy(puzzle) });
+          setUserGrid(deepCopy(puzzle));
+          setSelected(null); setHint(null); setErrors(new Set());
+          setHintsUsed(0); setMoveCount(0); setStreak(0); setSolved(false);
+          const diffLabel = diff === "leicht" ? "leichtes" : diff === "mittel" ? "mittleres" : "schweres";
+          const tips = {
+            leicht: "Fang bei de Kästle a wo scho viel drin isch — do findsch am schnellschte **Naked Singles**.",
+            mittel: "Schau zerscht welche Zahl am häufigschte vorkommt ond mach **Cross-Hatching** — Zeile ond Spalte abchecke!",
+            schwer: "Des wird knackig! Du brauchsch all drei Strategie: **Naked Singles**, **Hidden Singles** ond **Cross-Hatching**. Nimm dr Zeit!",
+          };
+          setMessages([{
+            text: `Auf geht's! 🎯 A ${diffLabel} Puzzle — ${given} Zahle vorgegebe, ${81-given} musch du finde. ${tips[diff]}`
+          }]);
+          setGenerating(false);
+        }, 80);
+      }, []);
+
+      const handleCellClick = useCallback((r, c) => {
+        if (!game || solved) return;
+        setSelected({r, c});
+        setHint(null);
+        // Haptic feedback
+        if (navigator.vibrate) navigator.vibrate(5);
+      }, [game, solved]);
+
+      const checkComplete = useCallback((grid, solution) => {
+        for (let i = 0; i < 9; i++)
+          for (let j = 0; j < 9; j++)
+            if (grid[i][j] !== solution[i][j]) return false;
+        return true;
+      }, []);
+
+      const handleNumber = useCallback((n) => {
+        if (!selected || !game || !userGrid || solved) return;
+        const { r, c } = selected;
+        if (game.original[r][c] !== EMPTY) return;
+
+        const newGrid = deepCopy(userGrid);
+        const newErrors = new Set(errors);
+
+        if (n === 0) {
+          newGrid[r][c] = EMPTY;
+          newErrors.delete(`${r},${c}`);
+        } else {
+          newGrid[r][c] = n;
+          setMoveCount(prev => prev + 1);
+          if (game.solution[r][c] !== n) {
+            newErrors.add(`${r},${c}`);
+            setStreak(0);
+            if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
+            if (Math.random() < 0.35) addMessage(randomPick(wrongMessages));
+          } else {
+            newErrors.delete(`${r},${c}`);
+            if (navigator.vibrate) navigator.vibrate(3);
+            setStreak(prev => {
+              const s = prev + 1;
+              if (s > 0 && s % 5 === 0) {
+                addMessage(`${randomPick(encouragements)} ${s} richtige in Folge — du bisch am Fließband! 🔥`);
+              }
+              return s;
+            });
+          }
+        }
+        setErrors(newErrors);
+        setUserGrid(newGrid);
+
+        if (n !== 0 && checkComplete(newGrid, game.solution)) {
+          setSolved(true);
+          if (navigator.vibrate) navigator.vibrate([50, 50, 50, 50, 100]);
+          const noHints = hintsUsed === 0;
+          addMessage(`Heiligs Blechle! 🎉🎉🎉 Du hosch es gschafft! ${noHints ? "Ond des ganz ohne Hinweis — Respekt, du bisch a echtr Sudoku-Meischter!" : `Mit ${hintsUsed} Hinweis${hintsUsed>1?"e":""} — trotzdem sauber!`} Bereit für's nächschte? Na los!`);
+        }
+      }, [selected, game, userGrid, errors, hintsUsed, solved, addMessage, checkComplete]);
+
+      const requestHint = useCallback(() => {
+        if (!userGrid || !game || solved) return;
+        const cleanGrid = deepCopy(userGrid);
+        for (let r = 0; r < 9; r++)
+          for (let c = 0; c < 9; c++)
+            if (game.original[r][c] === EMPTY && cleanGrid[r][c] !== EMPTY && game.solution[r][c] !== cleanGrid[r][c])
+              cleanGrid[r][c] = EMPTY;
+
+        const h = getHint(cleanGrid);
+        if (h) {
+          setHint(h);
+          setHintsUsed(prev => prev + 1);
+          setSelected({r: h.row, c: h.col});
+          addMessage(`💡 ${h.explanation}`);
+        } else {
+          addMessage("Hmm, i find grad nix mit de Standard-Strategie. Gugge mol ob du irgendwo a falsche Zahl drin hosch (die rote!) — die blockieret manchmal alles.");
+        }
+      }, [userGrid, game, solved, addMessage]);
+
+      const applyHint = useCallback(() => {
+        if (!hint || !userGrid || !game) return;
+        const newGrid = deepCopy(userGrid);
+        newGrid[hint.row][hint.col] = hint.value;
+        setUserGrid(newGrid);
+        const newErrors = new Set(errors);
+        newErrors.delete(`${hint.row},${hint.col}`);
+        setErrors(newErrors);
+        const appliedHint = hint;
+        setHint(null);
+        addMessage(`So, ${appliedHint.value} isch gsetzt! ✓ Jetzt check mol drumrum — a neue Zahl löst oft de nächschte aus. Des isch dr **Ripple-Effekt**!`);
+
+        if (checkComplete(newGrid, game.solution)) {
+          setSolved(true);
+          if (navigator.vibrate) navigator.vibrate([50, 50, 50, 50, 100]);
+          addMessage(`Heiligs Blechle! 🎉🎉🎉 Fertig! Des war dr letzte Zug!`);
+        }
+      }, [hint, userGrid, game, errors, addMessage, checkComplete]);
+
+      // Cell state helpers
+      const getCellHighlight = (r, c) => {
+        if (!hint) return null;
+        for (const h of hint.highlight) if (h.r === r && h.c === c) return h.type;
+        return null;
+      };
+      const isSelected = (r, c) => selected && selected.r === r && selected.c === c;
+      const isSameRowColBox = (r, c) => {
+        if (!selected) return false;
+        return r === selected.r || c === selected.c ||
+          (Math.floor(r/3) === Math.floor(selected.r/3) && Math.floor(c/3) === Math.floor(selected.c/3));
+      };
+      const isSameNumber = (r, c) => {
+        if (!selected || !userGrid) return false;
+        const sv = userGrid[selected.r][selected.c];
+        return sv !== EMPTY && userGrid[r][c] === sv;
+      };
+
+      const numberCounts = useMemo(() => {
+        const counts = Array(10).fill(0);
+        if (userGrid) for (let r=0;r<9;r++) for (let c=0;c<9;c++) if (userGrid[r][c]!==EMPTY) counts[userGrid[r][c]]++;
+        return counts;
+      }, [userGrid]);
+
+      // Layout: use dvh for mobile viewport
+      return (
+        <div ref={appRef} style={{
+          height: "100dvh", width: "100vw",
+          display: "flex", flexDirection: "column", alignItems: "center",
+          justifyContent: "space-between",
+          padding: "env(safe-area-inset-top, 8px) 8px env(safe-area-inset-bottom, 8px) 8px",
+          overflow: "hidden",
+        }}>
+          {/* Header */}
+          <div style={{ textAlign: "center", flexShrink: 0, padding: "4px 0" }}>
+            <h1 style={{
+              fontSize: "clamp(1.1rem, 4vw, 1.5rem)", fontWeight: 800, margin: 0,
+              background: `linear-gradient(135deg, ${C.accent}, ${C.swabian})`,
+              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              letterSpacing: "0.1em",
+            }}>数独 SUDOKU-MEISCHTER</h1>
+            <p style={{
+              fontSize: "0.55rem", color: C.textDim, margin: 0,
+              letterSpacing: "0.15em", fontStyle: "italic",
+            }}>schwäbisch denke · logisch löse</p>
+          </div>
+
+          {/* Grid */}
+          <div style={{
+            width: "min(88vw, 400px)", aspectRatio: "1",
+            display: "grid", gridTemplateColumns: "repeat(9,1fr)", gridTemplateRows: "repeat(9,1fr)",
+            border: `2.5px solid ${C.gridBold}`, borderRadius: "5px", overflow: "hidden",
+            boxShadow: "0 0 40px rgba(100,255,218,0.06)",
+            flexShrink: 0,
+          }}>
+            {Array.from({length:81}).map((_,idx) => {
+              const r = Math.floor(idx/9), c = idx%9;
+              const val = userGrid ? userGrid[r][c] : 0;
+              const isGiven = game ? game.original[r][c] !== EMPTY : false;
+              return <Cell key={idx} r={r} c={c} val={val} isGiven={isGiven}
+                hasError={errors.has(`${r},${c}`)}
+                sel={isSelected(r,c)} sameUnit={isSameRowColBox(r,c)}
+                sameNum={isSameNumber(r,c)} hlType={getCellHighlight(r,c)}
+                candidates={showCandidates && userGrid && val===EMPTY ? getCandidates(userGrid,r,c) : null}
+                onClick={() => handleCellClick(r,c)}
+              />;
+            })}
+          </div>
+
+          {/* Number Pad */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "repeat(10,1fr)", gap: "4px",
+            width: "min(88vw, 400px)", flexShrink: 0, padding: "2px 0",
+          }}>
+            {[1,2,3,4,5,6,7,8,9].map(n => {
+              const done = numberCounts[n] >= 9;
+              return (
+                <button key={n} onClick={() => handleNumber(n)}
+                  style={{
+                    height: "clamp(38px, 9vw, 48px)",
+                    background: done ? "transparent" : C.surface,
+                    border: `1px solid ${done ? "transparent" : C.accentDim}`,
+                    borderRadius: "6px", color: done ? C.textDim : C.accent,
+                    fontSize: "clamp(0.9rem, 4vw, 1.3rem)", fontWeight: 600,
+                    opacity: done ? 0.2 : 1, touchAction: "manipulation",
+                  }}
+                >{n}</button>
+              );
+            })}
+            <button onClick={() => handleNumber(0)}
+              style={{
+                height: "clamp(38px, 9vw, 48px)",
+                background: C.surface, border: `1px solid ${C.gridLine}`,
+                borderRadius: "6px", color: C.textDim,
+                fontSize: "clamp(0.8rem, 3vw, 1rem)", touchAction: "manipulation",
+              }}>✕</button>
+          </div>
+
+          {/* Action Buttons */}
+          <div style={{
+            display: "flex", gap: "5px", width: "min(88vw, 400px)", flexShrink: 0,
+          }}>
+            <button onClick={requestHint} disabled={!game || solved}
+              style={{
+                flex: 3, padding: "10px 0",
+                background: game && !solved ? `linear-gradient(135deg, ${C.accentDim}, #1a5a4a)` : C.surface,
+                borderRadius: "8px", color: game && !solved ? C.accent : C.textDim,
+                fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em",
+                opacity: game && !solved ? 1 : 0.4, touchAction: "manipulation",
+              }}>💡 HINWEIS</button>
+            {hint && (
+              <button onClick={applyHint}
+                style={{
+                  flex: 2, padding: "10px 0",
+                  background: "linear-gradient(135deg, #5a4a1a, #3a3510)",
+                  borderRadius: "8px", color: C.hint,
+                  fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em",
+                  touchAction: "manipulation",
+                }}>✓ EISETZE</button>
+            )}
+            <button onClick={() => setShowCandidates(p => !p)}
+              style={{
+                flex: 2, padding: "10px 0",
+                background: showCandidates ? C.accentDim : C.surface,
+                border: `1px solid ${showCandidates ? C.accent : C.gridLine}`,
+                borderRadius: "8px", color: showCandidates ? C.accent : C.textDim,
+                fontSize: "0.68rem", letterSpacing: "0.05em", touchAction: "manipulation",
+              }}>{showCandidates ? "▣ NOTIZE" : "▢ NOTIZE"}</button>
+          </div>
+
+          {/* Teacher Messages */}
+          <div className="messages" style={{
+            width: "min(88vw, 400px)", flex: "1 1 auto",
+            background: C.surface, borderRadius: "10px",
+            border: `1px solid rgba(255,179,71,0.15)`,
+            overflowY: "auto", minHeight: 0,
+            touchAction: "pan-y",
+          }}>
+            {messages.map((msg, i) => (
+              <div key={i} style={{
+                padding: "8px 12px",
+                borderBottom: i < messages.length-1 ? `1px solid rgba(255,179,71,0.08)` : "none",
+                fontSize: "clamp(0.65rem, 2.5vw, 0.75rem)", lineHeight: 1.5,
+              }}>
+                <span style={{
+                  color: C.swabian, fontWeight: 800, fontSize: "0.58rem", letterSpacing: "0.08em",
+                }}>MEISCHTER: </span>
+                {msg.text.split("**").map((part, j) =>
+                  j%2===1 ? <strong key={j} style={{color: C.accent}}>{part}</strong>
+                    : <span key={j}>{part}</span>
+                )}
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* New Game + Stats */}
+          <div style={{ width: "min(88vw, 400px)", flexShrink: 0 }}>
+            <div style={{ display: "flex", gap: "5px", marginBottom: "4px" }}>
+              {[
+                { key: "leicht", label: "LEICHT", emoji: "🌱" },
+                { key: "mittel", label: "MITTEL", emoji: "🔥" },
+                { key: "schwer", label: "SCHWER", emoji: "💀" },
+              ].map(({ key, label, emoji }) => (
+                <button key={key} onClick={() => startGame(key)} disabled={generating}
+                  style={{
+                    flex: 1, padding: "10px 0",
+                    background: difficulty === key && game ? "rgba(255,179,71,0.12)" : C.surface,
+                    border: `1px solid ${difficulty === key && game ? C.swabian : C.gridLine}`,
+                    borderRadius: "8px", color: difficulty === key && game ? C.swabian : C.textDim,
+                    fontSize: "0.63rem", fontWeight: 700, letterSpacing: "0.1em",
+                    touchAction: "manipulation",
+                  }}>{generating && difficulty === key ? "⏳" : `${emoji} ${label}`}</button>
+              ))}
+            </div>
+            {game && (
+              <div style={{
+                display: "flex", justifyContent: "center", gap: "14px",
+                fontSize: "0.52rem", color: C.textDim, letterSpacing: "0.06em",
+                paddingBottom: "2px",
+              }}>
+                <span>ZÜG {moveCount}</span>
+                <span>HINWEIS {hintsUsed}</span>
+                <span>SERIE {streak}🔥</span>
+                <span>VORGABE {game.given}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================
+    // MOUNT
+    // ============================================================
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<SudokuMeischter />);
+  </script>
+</body>
+</html>
