@@ -7,178 +7,95 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#1a1a2e">
-  <meta name="description" content="Sudoku-Meischter — schwäbisch denke, logisch löse. Learn Sudoku with a Swabian AI teacher.">
+  <meta name="description" content="Sudoku-Meischter — schwäbisch denke, logisch löse">
   <title>数独 Sudoku-Meischter</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>数</text></svg>">
   <style>
     *, *::before, *::after {
       box-sizing: border-box;
-      margin: 0;
-      padding: 0;
+      margin: 0; padding: 0;
       -webkit-tap-highlight-color: transparent;
       -webkit-touch-callout: none;
     }
-    html, body {
-      height: 100%;
-      overflow: hidden;
-      overscroll-behavior: none;
-      touch-action: manipulation;
-      user-select: none;
-      -webkit-user-select: none;
-    }
+    html, body { height: 100%; overflow: hidden; overscroll-behavior: none; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
     body {
       font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
       background: linear-gradient(170deg, #0f0f23 0%, #1a1a2e 40%, #0d1117 100%);
       color: #c9d1d9;
     }
-    #root {
-      height: 100%;
-    }
-    button {
-      font-family: inherit;
-      border: none;
-      outline: none;
-      cursor: pointer;
-      touch-action: manipulation;
-    }
-    button:active {
-      transform: scale(0.95);
-      transition: transform 0.05s;
-    }
-    /* Prevent zoom on double-tap for iOS */
-    button, input, select, textarea {
-      font-size: 16px;
-    }
-    /* Scrollbar styling for message panel */
-    .messages::-webkit-scrollbar { width: 3px; }
-    .messages::-webkit-scrollbar-track { background: transparent; }
-    .messages::-webkit-scrollbar-thumb { background: rgba(255,179,71,0.2); border-radius: 3px; }
+    #root { height: 100%; }
+    button { font-family: inherit; border: none; outline: none; cursor: pointer; touch-action: manipulation; }
+    button:active { transform: scale(0.95); transition: transform 0.05s; }
+    .msgs::-webkit-scrollbar { width: 3px; }
+    .msgs::-webkit-scrollbar-track { background: transparent; }
+    .msgs::-webkit-scrollbar-thumb { background: rgba(255,179,71,0.2); border-radius: 3px; }
   </style>
 </head>
 <body>
   <div id="root"></div>
-
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
-
   <script type="text/babel">
     const { useState, useCallback, useEffect, useRef, useMemo } = React;
 
-    // ============================================================
-    // SUDOKU ENGINE
-    // ============================================================
     const EMPTY = 0;
-
-    function deepCopy(grid) {
-      return grid.map(row => [...row]);
-    }
+    function deepCopy(g) { return g.map(r => [...r]); }
 
     function getCandidates(grid, r, c) {
       if (grid[r][c] !== EMPTY) return new Set();
       const used = new Set();
-      for (let i = 0; i < 9; i++) {
-        used.add(grid[r][i]);
-        used.add(grid[i][c]);
-      }
-      const br = Math.floor(r / 3) * 3;
-      const bc = Math.floor(c / 3) * 3;
-      for (let i = br; i < br + 3; i++)
-        for (let j = bc; j < bc + 3; j++)
-          used.add(grid[i][j]);
-      const cands = new Set();
-      for (let n = 1; n <= 9; n++) if (!used.has(n)) cands.add(n);
-      return cands;
+      for (let i = 0; i < 9; i++) { used.add(grid[r][i]); used.add(grid[i][c]); }
+      const br = Math.floor(r/3)*3, bc = Math.floor(c/3)*3;
+      for (let i = br; i < br+3; i++) for (let j = bc; j < bc+3; j++) used.add(grid[i][j]);
+      const s = new Set();
+      for (let n = 1; n <= 9; n++) if (!used.has(n)) s.add(n);
+      return s;
     }
 
     // ============================================================
-    // SCHWÄBISCH FLAVOR
+    // SCHWÄBISCH
     // ============================================================
-    const boxNames = [
-      "obe links", "obe Midde", "obe rechts",
-      "Midde links", "genau in dr Midde", "Midde rechts",
-      "unde links", "unde Midde", "unde rechts"
-    ];
-
-    const encouragements = [
-      "Sauber! 👏", "Des isch fei gscheid!", "Jawoll, so goht des!",
-      "Bassd scho!", "Ha, genau!", "Wunderbar gmacht!",
-      "So isch es richtig!", "Du bisch en Fuchs!", "Läuft bei dir!",
-      "Oifach guad!", "So ka mr's macha!", "Alle Achtung!",
-    ];
-
-    const wrongMessages = [
-      "Hmmm, des stimmt net ganz... Gugge nochmal!",
-      "Oi oi oi, des passt net. Probier's nochmal!",
-      "Nee, des isch es net. Schau dir Zeile ond Spalte nochmal a.",
-      "Heiligs Blechle, des goht net da na! 🙈",
-      "Net ganz, aber koi Stress — mir lernet ja!",
-      "Do hots e Häggle... des isch net richtig.",
-    ];
-
-    const hintIntros = [
-      "Gugge mol da → ", "Pass uff, jetzt kommt's → ",
-      "Also, guck her → ", "Do schau → ", "I zeig dr was → ",
-    ];
-
-    function randomPick(arr) {
-      return arr[Math.floor(Math.random() * arr.length)];
-    }
+    const boxNames = ["obe links","obe Midde","obe rechts","Midde links","genau in dr Midde","Midde rechts","unde links","unde Midde","unde rechts"];
+    const encouragements = ["Sauber! 👏","Des isch fei gscheid!","Jawoll, so goht des!","Bassd scho!","Ha, genau!","Wunderbar gmacht!","So isch es richtig!","Du bisch en Fuchs!","Läuft bei dir!","Oifach guad!","So ka mr's macha!","Alle Achtung!"];
+    const wrongMessages = ["Hmmm, des stimmt net ganz... Gugge nochmal!","Oi oi oi, des passt net. Probier's nochmal!","Nee, des isch es net. Schau dir Zeile ond Spalte nochmal a.","Heiligs Blechle, des goht net da na! 🙈","Net ganz, aber koi Stress — mir lernet ja!","Do hots e Häggle... des isch net richtig."];
+    const hintIntros = ["Gugge mol da → ","Pass uff, jetzt kommt's → ","Also, guck her → ","Do schau → ","I zeig dr was → "];
+    function rp(a) { return a[Math.floor(Math.random()*a.length)]; }
 
     // ============================================================
     // STRATEGIES
     // ============================================================
     function findNakedSingle(grid) {
-      for (let r = 0; r < 9; r++) {
-        for (let c = 0; c < 9; c++) {
-          if (grid[r][c] !== EMPTY) continue;
-          const cands = getCandidates(grid, r, c);
-          if (cands.size === 1) {
-            const val = [...cands][0];
-            return {
-              row: r, col: c, value: val,
-              strategy: "Naked Single",
-              explanation: `${randomPick(hintIntros)}Zeile ${r+1}, Spalte ${c+1} — do ka bloß noch die ${val} na! Alle andere Zahle send scho in dr Zeile, Spalte oder em Kästle drin. Des nennt mr an **Naked Single**.`,
-              highlight: [{ r, c, type: "target" }],
-            };
-          }
+      for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) {
+        if (grid[r][c] !== EMPTY) continue;
+        const cands = getCandidates(grid, r, c);
+        if (cands.size === 1) {
+          const val = [...cands][0];
+          return { row:r, col:c, value:val, strategy:"Naked Single",
+            explanation:`${rp(hintIntros)}Zeile ${r+1}, Spalte ${c+1} — do ka bloß noch die ${val} na! Alle andere Zahle send scho in dr Zeile, Spalte oder em Kästle drin. Des nennt mr an **Naked Single**.`,
+            highlight:[{r,c,type:"target"}] };
         }
       }
       return null;
     }
 
     function findHiddenSingle(grid) {
-      const unitTypes = [
-        { name: "Kästle", nameEn: "box", getUnit: (idx) => {
-          const br = Math.floor(idx/3)*3, bc = (idx%3)*3;
-          const cells = [];
-          for (let i = br; i < br+3; i++) for (let j = bc; j < bc+3; j++) cells.push([i,j]);
-          return cells;
-        }},
-        { name: "Zeile", nameEn: "row", getUnit: (idx) => Array.from({length:9},(_,j)=>[idx,j]) },
-        { name: "Spalte", nameEn: "column", getUnit: (idx) => Array.from({length:9},(_,i)=>[i,idx]) },
+      const units = [
+        {name:"Kästle",en:"box",get:(i)=>{const br=Math.floor(i/3)*3,bc=(i%3)*3,c=[];for(let r=br;r<br+3;r++)for(let j=bc;j<bc+3;j++)c.push([r,j]);return c;}},
+        {name:"Zeile",en:"row",get:(i)=>Array.from({length:9},(_,j)=>[i,j])},
+        {name:"Spalte",en:"col",get:(i)=>Array.from({length:9},(_,j)=>[j,i])},
       ];
-
-      for (const { name, nameEn, getUnit } of unitTypes) {
-        for (let idx = 0; idx < 9; idx++) {
-          const cells = getUnit(idx);
-          for (let n = 1; n <= 9; n++) {
-            if (cells.some(([r,c]) => grid[r][c] === n)) continue;
-            const possible = cells.filter(([r,c]) => grid[r][c] === EMPTY && getCandidates(grid,r,c).has(n));
-            if (possible.length === 1) {
-              const [r,c] = possible[0];
-              let unitLabel = nameEn === "box" ? `em Kästle ${boxNames[idx]}`
-                : nameEn === "row" ? `dr Zeile ${r+1}` : `dr Spalte ${c+1}`;
-              return {
-                row: r, col: c, value: n,
-                strategy: "Hidden Single",
-                explanation: `${randomPick(hintIntros)}In ${unitLabel} ka die ${n} bloß an oi Stelle na — ond des isch Zeile ${r+1}, Spalte ${c+1}. Überall sonschd isch die ${n} scho blockiert. Des isch a **Hidden Single**.`,
-                highlight: [
-                  { r, c, type: "target" },
-                  ...cells.filter(([cr,cc]) => !(cr===r && cc===c)).map(([cr,cc]) => ({r:cr, c:cc, type:"unit"})),
-                ],
-              };
-            }
+      for (const {name,en,get} of units) for (let idx=0;idx<9;idx++) {
+        const cells=get(idx);
+        for (let n=1;n<=9;n++) {
+          if (cells.some(([r,c])=>grid[r][c]===n)) continue;
+          const pos=cells.filter(([r,c])=>grid[r][c]===EMPTY&&getCandidates(grid,r,c).has(n));
+          if (pos.length===1) {
+            const [r,c]=pos[0];
+            const label=en==="box"?`em Kästle ${boxNames[idx]}`:en==="row"?`dr Zeile ${r+1}`:`dr Spalte ${c+1}`;
+            return { row:r, col:c, value:n, strategy:"Hidden Single",
+              explanation:`${rp(hintIntros)}In ${label} ka die ${n} bloß an oi Stelle na — ond des isch Zeile ${r+1}, Spalte ${c+1}. Des isch a **Hidden Single**.`,
+              highlight:[{r,c,type:"target"}, ...cells.filter(([cr,cc])=>!(cr===r&&cc===c)).map(([cr,cc])=>({r:cr,c:cc,type:"unit"}))] };
           }
         }
       }
@@ -186,36 +103,60 @@
     }
 
     function findCrossHatch(grid) {
-      const freq = Array(10).fill(0);
-      for (let r = 0; r < 9; r++)
-        for (let c = 0; c < 9; c++)
-          if (grid[r][c] !== EMPTY) freq[grid[r][c]]++;
+      const freq=Array(10).fill(0);
+      for(let r=0;r<9;r++)for(let c=0;c<9;c++)if(grid[r][c]!==EMPTY)freq[grid[r][c]]++;
+      const order=Array.from({length:9},(_,i)=>i+1).filter(n=>freq[n]<9).sort((a,b)=>freq[b]-freq[a]);
+      for (const n of order) for (let box=0;box<9;box++) {
+        const br=Math.floor(box/3)*3,bc=(box%3)*3;
+        let has=false;
+        for(let i=br;i<br+3;i++)for(let j=bc;j<bc+3;j++)if(grid[i][j]===n)has=true;
+        if(has)continue;
+        const pos=[];
+        for(let i=br;i<br+3;i++)for(let j=bc;j<bc+3;j++)if(grid[i][j]===EMPTY&&getCandidates(grid,i,j).has(n))pos.push([i,j]);
+        if(pos.length===1){
+          const [r,c]=pos[0];
+          return { row:r, col:c, value:n, strategy:"Cross-Hatching",
+            explanation:`${rp(hintIntros)}Die ${n} kommt scho ${freq[n]}× vor. Em Kästle ${boxNames[box]} fehlt se no — bloß Zeile ${r+1}, Spalte ${c+1} bleibt übrig. Des isch **Cross-Hatching**!`,
+            highlight:[{r,c,type:"target"}] };
+        }
+      }
+      return null;
+    }
 
-      const order = Array.from({length:9},(_,i)=>i+1)
-        .filter(n => freq[n] < 9)
-        .sort((a,b) => freq[b] - freq[a]);
-
-      for (const n of order) {
-        for (let box = 0; box < 9; box++) {
-          const br = Math.floor(box/3)*3, bc = (box%3)*3;
-          let hasN = false;
-          for (let i = br; i < br+3; i++)
-            for (let j = bc; j < bc+3; j++)
-              if (grid[i][j] === n) hasN = true;
-          if (hasN) continue;
-          const possible = [];
-          for (let i = br; i < br+3; i++)
-            for (let j = bc; j < bc+3; j++)
-              if (grid[i][j] === EMPTY && getCandidates(grid,i,j).has(n))
-                possible.push([i,j]);
-          if (possible.length === 1) {
-            const [r,c] = possible[0];
-            return {
-              row: r, col: c, value: n,
-              strategy: "Cross-Hatching",
-              explanation: `${randomPick(hintIntros)}Die ${n} kommt scho ${freq[n]}× vor uffm Board. Em Kästle ${boxNames[box]} fehlt se no — ond wenn mr die Zeile ond Spalte abcheckt wo scho a ${n} drin isch, bleibt bloß Zeile ${r+1}, Spalte ${c+1} übrig. Des isch **Cross-Hatching**!`,
-              highlight: [{ r, c, type: "target" }],
-            };
+    // Strategy 4: Naked Pairs
+    function findNakedPair(grid) {
+      const units = [
+        {name:"Zeile",en:"row",get:(i)=>Array.from({length:9},(_,j)=>[i,j])},
+        {name:"Spalte",en:"col",get:(i)=>Array.from({length:9},(_,j)=>[j,i])},
+        {name:"Kästle",en:"box",get:(i)=>{const br=Math.floor(i/3)*3,bc=(i%3)*3,c=[];for(let r=br;r<br+3;r++)for(let j=bc;j<bc+3;j++)c.push([r,j]);return c;}},
+      ];
+      for (const {name,en,get} of units) for (let idx=0;idx<9;idx++) {
+        const cells=get(idx);
+        const emptyCells=cells.filter(([r,c])=>grid[r][c]===EMPTY);
+        // Find cells with exactly 2 candidates
+        const pairs=emptyCells.map(([r,c])=>({r,c,cands:getCandidates(grid,r,c)})).filter(x=>x.cands.size===2);
+        for (let i=0;i<pairs.length;i++) for (let j=i+1;j<pairs.length;j++) {
+          const a=pairs[i],b=pairs[j];
+          const aArr=[...a.cands],bArr=[...b.cands];
+          if(aArr[0]===bArr[0]&&aArr[1]===bArr[1]) {
+            // Found a naked pair — can we eliminate from other cells?
+            const [n1,n2]=aArr;
+            for (const [r,c] of emptyCells) {
+              if((r===a.r&&c===a.c)||(r===b.r&&c===b.c))continue;
+              const cc=getCandidates(grid,r,c);
+              if(cc.has(n1)&&cc.size===1) continue; // would be naked single
+              if(cc.has(n2)&&cc.size===1) continue;
+              // If removing the pair values leaves exactly 1 candidate, we found a move
+              const remaining=new Set(cc);
+              remaining.delete(n1); remaining.delete(n2);
+              if(remaining.size===1 && (cc.has(n1)||cc.has(n2))) {
+                const val=[...remaining][0];
+                const label=en==="box"?`em Kästle ${boxNames[idx]}`:en==="row"?`dr Zeile ${r+1}`:`dr Spalte ${c+1}`;
+                return { row:r, col:c, value:val, strategy:"Naked Pair",
+                  explanation:`${rp(hintIntros)}In ${label} bildet ${n1} ond ${n2} a **Naked Pair** — die zwei Zahle ghöret in die Felder (${a.r+1},${a.c+1}) ond (${b.r+1},${b.c+1}). Des heißt in Zeile ${r+1}, Spalte ${c+1} bleibt nur noch die ${val} übrig!`,
+                  highlight:[{r,c,type:"target"},{r:a.r,c:a.c,type:"pair"},{r:b.r,c:b.c,type:"pair"}] };
+              }
+            }
           }
         }
       }
@@ -223,136 +164,280 @@
     }
 
     function getHint(grid) {
-      return findNakedSingle(grid) || findHiddenSingle(grid) || findCrossHatch(grid) || null;
+      return findNakedSingle(grid) || findHiddenSingle(grid) || findCrossHatch(grid) || findNakedPair(grid) || null;
+    }
+
+    // Check if solvable with given strategy set
+    function isSolvableWith(puzzle, strategies) {
+      const g = deepCopy(puzzle);
+      let maxIter = 200;
+      while (maxIter-- > 0) {
+        let hasEmpty = false;
+        for (let r = 0; r < 9; r++) for (let c = 0; c < 9; c++) if (g[r][c] === EMPTY) { hasEmpty = true; break; }
+        if (!hasEmpty) return true;
+        let h = null;
+        for (const fn of strategies) { h = fn(g); if (h) break; }
+        if (!h) return false;
+        g[h.row][h.col] = h.value;
+      }
+      return false;
+    }
+
+    // Strategy sets per difficulty — each tier requires genuinely harder thinking
+    const STRATS_LEICHT = [findNakedSingle]; // only "last number standing"
+    const STRATS_MITTEL = [findNakedSingle, findHiddenSingle, findCrossHatch];
+    const STRATS_SCHWER = [findNakedSingle, findHiddenSingle, findCrossHatch, findNakedPair];
+
+    function getStratsForDifficulty(diff) {
+      return diff === "leicht" ? STRATS_LEICHT : diff === "mittel" ? STRATS_MITTEL : STRATS_SCHWER;
+    }
+
+    // Backward compat wrapper
+    function isSolvableWithStrategies(puzzle) {
+      return isSolvableWith(puzzle, STRATS_SCHWER);
     }
 
     // ============================================================
     // GENERATOR
     // ============================================================
     function hasUniqueSolution(grid) {
-      const g = deepCopy(grid);
-      let count = 0;
-      function solve() {
-        if (count > 1) return;
-        for (let r = 0; r < 9; r++) {
-          for (let c = 0; c < 9; c++) {
-            if (g[r][c] !== EMPTY) continue;
-            const cands = getCandidates(g, r, c);
-            for (const n of cands) {
-              g[r][c] = n;
-              solve();
-              if (count > 1) return;
-              g[r][c] = EMPTY;
-            }
-            return;
-          }
+      const g=deepCopy(grid); let count=0;
+      function solve(){
+        if(count>1)return;
+        for(let r=0;r<9;r++)for(let c=0;c<9;c++){
+          if(g[r][c]!==EMPTY)continue;
+          const ca=getCandidates(g,r,c);
+          for(const n of ca){g[r][c]=n;solve();if(count>1)return;g[r][c]=EMPTY;}
+          return;
         }
         count++;
       }
-      solve();
-      return count === 1;
+      solve(); return count===1;
     }
 
     function generateFullGrid() {
-      const grid = Array.from({length:9}, () => Array(9).fill(EMPTY));
-      function fill(pos) {
-        if (pos === 81) return true;
-        const r = Math.floor(pos/9), c = pos % 9;
-        const nums = [1,2,3,4,5,6,7,8,9];
-        for (let i = nums.length-1; i > 0; i--) {
-          const j = Math.floor(Math.random()*(i+1));
-          [nums[i], nums[j]] = [nums[j], nums[i]];
-        }
-        for (const n of nums) {
-          if (getCandidates(grid, r, c).has(n)) {
-            grid[r][c] = n;
-            if (fill(pos+1)) return true;
-            grid[r][c] = EMPTY;
-          }
-        }
+      const grid=Array.from({length:9},()=>Array(9).fill(EMPTY));
+      function fill(pos){
+        if(pos===81)return true;
+        const r=Math.floor(pos/9),c=pos%9;
+        const nums=[1,2,3,4,5,6,7,8,9];
+        for(let i=nums.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[nums[i],nums[j]]=[nums[j],nums[i]];}
+        for(const n of nums){if(getCandidates(grid,r,c).has(n)){grid[r][c]=n;if(fill(pos+1))return true;grid[r][c]=EMPTY;}}
         return false;
       }
-      fill(0);
-      return grid;
+      fill(0); return grid;
     }
 
     function generatePuzzle(difficulty) {
-      const full = generateFullGrid();
-      const puzzle = deepCopy(full);
-      const target = difficulty === "leicht" ? 38 : difficulty === "mittel" ? 30 : 24;
-      const positions = [];
-      for (let r = 0; r < 9; r++)
-        for (let c = 0; c < 9; c++) positions.push([r,c]);
-      for (let i = positions.length-1; i > 0; i--) {
-        const j = Math.floor(Math.random()*(i+1));
-        [positions[i], positions[j]] = [positions[j], positions[i]];
+      // Leicht: lots of givens, naked singles only — pure "what's missing?" logic
+      // Mittel: fewer givens, need to scan rows/cols/boxes — hidden singles + cross-hatching
+      // Schwer: fewest givens, need pair elimination — genuinely hard
+      const target = difficulty==="leicht"?45:difficulty==="mittel"?33:25;
+      const strats = getStratsForDifficulty(difficulty);
+      let attempts = 0;
+      while (attempts < 12) {
+        attempts++;
+        const full=generateFullGrid();
+        const puzzle=deepCopy(full);
+        const positions=[];
+        for(let r=0;r<9;r++)for(let c=0;c<9;c++)positions.push([r,c]);
+        for(let i=positions.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[positions[i],positions[j]]=[positions[j],positions[i]];}
+        let given=81;
+        for(const [r,c] of positions){
+          if(given<=target)break;
+          const backup=puzzle[r][c];
+          puzzle[r][c]=EMPTY;
+          if(hasUniqueSolution(puzzle)){given--;}
+          else{puzzle[r][c]=backup;}
+        }
+        // Verify solvable with THIS difficulty's strategy set
+        if(isSolvableWith(puzzle, strats)){
+          // For mittel/schwer: also verify it actually NEEDS the harder strategies
+          // (otherwise it plays like an easier level)
+          if(difficulty==="mittel") {
+            // Should NOT be solvable with only leicht strategies
+            if(!isSolvableWith(puzzle, STRATS_LEICHT)) return {puzzle,solution:full,given};
+            // If it is solvable with leicht, try to remove more cells
+            for(const [r,c] of positions){
+              if(puzzle[r][c]===EMPTY)continue;
+              if(given<=target-3)break;
+              const backup=puzzle[r][c];
+              puzzle[r][c]=EMPTY;
+              if(hasUniqueSolution(puzzle)&&isSolvableWith(puzzle,strats)){
+                given--;
+                if(!isSolvableWith(puzzle,STRATS_LEICHT)) return {puzzle,solution:full,given};
+              } else { puzzle[r][c]=backup; }
+            }
+            return {puzzle,solution:full,given};
+          }
+          if(difficulty==="schwer") {
+            if(!isSolvableWith(puzzle, STRATS_MITTEL)) return {puzzle,solution:full,given};
+          }
+          return {puzzle,solution:full,given};
+        }
       }
-      let given = 81;
-      for (const [r,c] of positions) {
-        if (given <= target) break;
-        const backup = puzzle[r][c];
-        puzzle[r][c] = EMPTY;
-        if (hasUniqueSolution(puzzle)) { given--; }
-        else { puzzle[r][c] = backup; }
+      // Fallback: conservative generation
+      const full=generateFullGrid();
+      const puzzle=deepCopy(full);
+      const positions=[];
+      for(let r=0;r<9;r++)for(let c=0;c<9;c++)positions.push([r,c]);
+      for(let i=positions.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[positions[i],positions[j]]=[positions[j],positions[i]];}
+      let given=81;
+      const safeTarget=Math.min(target,40);
+      for(const [r,c] of positions){
+        if(given<=safeTarget)break;
+        const backup=puzzle[r][c];
+        puzzle[r][c]=EMPTY;
+        if(hasUniqueSolution(puzzle)&&isSolvableWith(puzzle,strats)){given--;}
+        else{puzzle[r][c]=backup;}
       }
-      return { puzzle, solution: full, given };
+      return {puzzle,solution:full,given};
     }
 
     // ============================================================
     // COLORS
     // ============================================================
     const C = {
-      bg: "#1a1a2e", surface: "#16213e", gridLine: "#1a4a7a",
-      gridBold: "#c9d1d9", cellBg: "#0d1b3e", cellGiven: "#e2e8f0",
-      cellUser: "#7aeccc", cellError: "#ff6b6b", cellSelected: "#1e4d8a",
-      accent: "#64ffda", accentDim: "#2a7a6a", text: "#c9d1d9",
-      textDim: "#6a7a8a", hint: "#ffd93d", swabian: "#ffb347",
+      bg:"#1a1a2e", surface:"#16213e", gridLine:"#1a4a7a",
+      gridBold:"#c9d1d9", cellBg:"#0d1b3e", cellGiven:"#e2e8f0",
+      cellUser:"#7aeccc", cellError:"#ff6b6b", cellSelected:"#1e4d8a",
+      accent:"#64ffda", accentDim:"#2a7a6a", text:"#c9d1d9",
+      textDim:"#6a7a8a", hint:"#ffd93d", swabian:"#ffb347", pair:"#c792ea",
     };
 
     // ============================================================
-    // GRID CELL
+    // CELL COMPONENT
     // ============================================================
-    function Cell({ r, c, val, isGiven, hasError, sel, sameUnit, sameNum, hlType, candidates, onClick }) {
+    function Cell({ r, c, val, isGiven, hasError, sel, sameUnit, sameNum, hlType, candidates, manualNotes, highlightsOn, onClick }) {
       let bgColor = C.cellBg;
       if (hlType === "target") bgColor = "rgba(255,217,61,0.2)";
+      else if (hlType === "pair") bgColor = "rgba(199,146,234,0.15)";
       else if (hlType === "unit") bgColor = "rgba(100,255,218,0.06)";
       else if (sel) bgColor = C.cellSelected;
-      else if (sameNum && val !== EMPTY) bgColor = "rgba(100,255,218,0.1)";
-      else if (sameUnit) bgColor = "rgba(100,255,218,0.03)";
+      else if (highlightsOn && sameNum && val !== EMPTY) bgColor = "rgba(100,255,218,0.1)";
+      else if (highlightsOn && sameUnit) bgColor = "rgba(100,255,218,0.03)";
+
+      const hasNotes = manualNotes && manualNotes.size > 0;
+      const showCands = candidates && candidates.size > 0;
+      const notesToShow = hasNotes ? manualNotes : showCands ? candidates : null;
 
       return (
-        <div
-          onClick={onClick}
-          onTouchEnd={(e) => { e.preventDefault(); onClick(); }}
+        <div onClick={onClick} onTouchEnd={(e)=>{e.preventDefault();onClick();}}
           style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            background: bgColor,
-            borderRight: c === 8 ? "none" : (c%3===2) ? `2px solid ${C.gridBold}` : `0.5px solid ${C.gridLine}`,
-            borderBottom: r === 8 ? "none" : (r%3===2) ? `2px solid ${C.gridBold}` : `0.5px solid ${C.gridLine}`,
-            position: "relative",
-            fontSize: candidates ? "0.5rem" : "clamp(1rem, 5vw, 1.6rem)",
-            fontWeight: isGiven ? 700 : 500,
-            color: hasError ? C.cellError : isGiven ? C.cellGiven : hlType === "target" ? C.hint : C.cellUser,
-            lineHeight: 1,
-            touchAction: "manipulation",
-            transition: "background 0.1s",
-          }}
-        >
-          {val !== EMPTY ? val : candidates ? (
+            display:"flex", alignItems:"center", justifyContent:"center",
+            background:bgColor,
+            borderRight:c===8?"none":(c%3===2)?`2px solid ${C.gridBold}`:`0.5px solid ${C.gridLine}`,
+            borderBottom:r===8?"none":(r%3===2)?`2px solid ${C.gridBold}`:`0.5px solid ${C.gridLine}`,
+            position:"relative",
+            fontSize:notesToShow?"0.5rem":"clamp(1rem, 5vw, 1.6rem)",
+            fontWeight:isGiven?700:500,
+            color:hasError?C.cellError:isGiven?C.cellGiven:hlType==="target"?C.hint:hlType==="pair"?C.pair:C.cellUser,
+            lineHeight:1, touchAction:"manipulation", transition:"background 0.1s",
+          }}>
+          {val !== EMPTY ? val : notesToShow ? (
             <div style={{
-              display: "grid", gridTemplateColumns: "repeat(3,1fr)", gridTemplateRows: "repeat(3,1fr)",
-              width: "88%", height: "88%", alignItems: "center", justifyItems: "center",
-              fontSize: "clamp(0.35rem, 1.8vw, 0.55rem)", color: C.textDim, lineHeight: 1,
+              display:"grid", gridTemplateColumns:"repeat(3,1fr)", gridTemplateRows:"repeat(3,1fr)",
+              width:"88%", height:"88%", alignItems:"center", justifyItems:"center",
+              fontSize:"clamp(0.35rem, 1.8vw, 0.55rem)", color: hasNotes ? C.swabian : C.textDim, lineHeight:1,
             }}>
               {[1,2,3,4,5,6,7,8,9].map(n => (
-                <span key={n} style={{ opacity: candidates.has(n) ? 0.7 : 0 }}>{n}</span>
+                <span key={n} style={{opacity:notesToShow.has(n)?0.8:0}}>{n}</span>
               ))}
             </div>
           ) : null}
-          {sel && <div style={{
-            position: "absolute", inset: 1,
-            border: `2px solid ${C.accent}`, borderRadius: 2, pointerEvents: "none",
-          }} />}
+          {sel && <div style={{position:"absolute",inset:1,border:`2px solid ${C.accent}`,borderRadius:2,pointerEvents:"none"}}/>}
+        </div>
+      );
+    }
+
+    // ============================================================
+    // SETTINGS PANEL
+    // ============================================================
+    function SettingsPanel({ highlightsOn, setHighlightsOn, noteMode, setNoteMode, gridScale, setGridScale, onClose }) {
+      return (
+        <div style={{
+          position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:100,
+          display:"flex", alignItems:"center", justifyContent:"center",
+          touchAction:"manipulation",
+        }} onClick={onClose}>
+          <div onClick={e=>e.stopPropagation()} style={{
+            background:C.surface, borderRadius:"14px", padding:"20px",
+            width:"min(85vw, 360px)", border:`1px solid ${C.gridLine}`,
+            boxShadow:"0 10px 40px rgba(0,0,0,0.5)",
+          }}>
+            <h2 style={{fontSize:"1rem",color:C.swabian,marginBottom:"16px",letterSpacing:"0.1em"}}>
+              ⚙️ EISTELLUNGA
+            </h2>
+
+            {/* Highlights toggle */}
+            <div style={{marginBottom:"14px"}}>
+              <div style={{fontSize:"0.72rem",color:C.text,marginBottom:"6px",fontWeight:600}}>
+                Markierunge
+              </div>
+              <div style={{display:"flex",gap:"6px"}}>
+                {[{key:true,label:"🎯 Assisted",desc:"Zeile/Spalte/Zahl markiert"},{key:false,label:"🧠 Training",desc:"Koi Hilfe, du musch selber gugge!"}].map(({key,label,desc})=>(
+                  <button key={String(key)} onClick={()=>setHighlightsOn(key)} style={{
+                    flex:1, padding:"8px 6px", borderRadius:"8px",
+                    background:highlightsOn===key?"rgba(255,179,71,0.15)":C.cellBg,
+                    border:`1px solid ${highlightsOn===key?C.swabian:C.gridLine}`,
+                    color:highlightsOn===key?C.swabian:C.textDim,
+                    fontSize:"0.65rem", textAlign:"center",
+                  }}>
+                    <div style={{fontWeight:700}}>{label}</div>
+                    <div style={{fontSize:"0.55rem",marginTop:"3px",opacity:0.7}}>{desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Note mode */}
+            <div style={{marginBottom:"14px"}}>
+              <div style={{fontSize:"0.72rem",color:C.text,marginBottom:"6px",fontWeight:600}}>
+                Notize-Modus
+              </div>
+              <div style={{display:"flex",gap:"6px"}}>
+                {[
+                  {key:"off",label:"Aus",desc:"Koi Notize"},
+                  {key:"manual",label:"✏️ Selbst",desc:"Du schreibsch selber"},
+                  {key:"auto",label:"🤖 Vorlage",desc:"Auto-berechnet"},
+                ].map(({key,label,desc})=>(
+                  <button key={key} onClick={()=>setNoteMode(key)} style={{
+                    flex:1, padding:"8px 4px", borderRadius:"8px",
+                    background:noteMode===key?"rgba(100,255,218,0.12)":C.cellBg,
+                    border:`1px solid ${noteMode===key?C.accent:C.gridLine}`,
+                    color:noteMode===key?C.accent:C.textDim,
+                    fontSize:"0.62rem", textAlign:"center",
+                  }}>
+                    <div style={{fontWeight:700}}>{label}</div>
+                    <div style={{fontSize:"0.52rem",marginTop:"2px",opacity:0.7}}>{desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Grid scale */}
+            <div style={{marginBottom:"16px"}}>
+              <div style={{fontSize:"0.72rem",color:C.text,marginBottom:"6px",fontWeight:600}}>
+                Rätselgröße
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
+                <span style={{fontSize:"0.65rem",color:C.textDim}}>A</span>
+                <input type="range" min="80" max="100" value={gridScale}
+                  onChange={e=>setGridScale(Number(e.target.value))}
+                  style={{flex:1, accentColor:C.accent, height:"20px"}} />
+                <span style={{fontSize:"0.85rem",color:C.textDim}}>A</span>
+              </div>
+              <div style={{textAlign:"center",fontSize:"0.55rem",color:C.textDim,marginTop:"2px"}}>
+                {gridScale}%
+              </div>
+            </div>
+
+            <button onClick={onClose} style={{
+              width:"100%", padding:"10px", borderRadius:"8px",
+              background:C.accentDim, color:C.accent,
+              fontSize:"0.75rem", fontWeight:700, letterSpacing:"0.08em",
+            }}>FERTIG</button>
+          </div>
         </div>
       );
     }
@@ -360,377 +445,359 @@
     // ============================================================
     // MAIN APP
     // ============================================================
-    function SudokuMeischter() {
+    function App() {
       const [game, setGame] = useState(null);
       const [userGrid, setUserGrid] = useState(null);
       const [selected, setSelected] = useState(null);
       const [hint, setHint] = useState(null);
       const [messages, setMessages] = useState([
-        { text: "Grüß Gott! I bin dein Sudoku-Meischter. 🎓 Fang a neues Schpiel a ond i zeig dr die Strategien wo die Profis verwendet. Drück uff a Feld, gib a Zahl ei, oder frag mi um an **Hinweis**! Des wird sauber!" }
+        {text:"Grüß Gott! I bin dein Sudoku-Meischter. 🎓 Fang a neues Schpiel a! Drück uff a Feld, gib a Zahl ei, oder frag mi um an **Hinweis**. Über ⚙️ kasch du eischtelle ob Markierunge a oder aus send — im **Trainingsmodus** muß dein Kopf selber schaffe!"}
       ]);
       const [errors, setErrors] = useState(new Set());
       const [generating, setGenerating] = useState(false);
       const [difficulty, setDifficulty] = useState("mittel");
-      const [showCandidates, setShowCandidates] = useState(false);
       const [hintsUsed, setHintsUsed] = useState(0);
       const [moveCount, setMoveCount] = useState(0);
       const [streak, setStreak] = useState(0);
       const [solved, setSolved] = useState(false);
+
+      // Settings
+      const [highlightsOn, setHighlightsOn] = useState(true);
+      const [noteMode, setNoteMode] = useState("off"); // "off" | "manual" | "auto"
+      const [gridScale, setGridScale] = useState(88);
+      const [showSettings, setShowSettings] = useState(false);
+      const [isNoteInput, setIsNoteInput] = useState(false); // for manual note toggle
+
+      // Manual notes: [r][c] => Set of numbers
+      const [manualNotes, setManualNotes] = useState(() =>
+        Array.from({length:9}, ()=> Array.from({length:9}, ()=> new Set()))
+      );
+
       const messagesEndRef = useRef(null);
-      const appRef = useRef(null);
+      useEffect(()=>{messagesEndRef.current?.scrollIntoView({behavior:"smooth"});},[messages]);
 
-      useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-      }, [messages]);
-
-      // Prevent pull-to-refresh and bounce
-      useEffect(() => {
-        const prevent = (e) => {
-          if (e.target.closest('.messages')) return;
-          e.preventDefault();
-        };
-        document.addEventListener('touchmove', prevent, { passive: false });
-        return () => document.removeEventListener('touchmove', prevent);
-      }, []);
+      // Prevent pull-to-refresh
+      useEffect(()=>{
+        const prevent=(e)=>{if(e.target.closest('.msgs'))return;e.preventDefault();};
+        document.addEventListener('touchmove',prevent,{passive:false});
+        return ()=>document.removeEventListener('touchmove',prevent);
+      },[]);
 
       // Keyboard
-      useEffect(() => {
-        const handler = (e) => {
-          if (!selected || !game || solved) return;
-          const n = parseInt(e.key);
-          if (n >= 1 && n <= 9) handleNumber(n);
-          if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") handleNumber(0);
-          if (e.key === "ArrowUp" && selected.r > 0) setSelected({r:selected.r-1, c:selected.c});
-          if (e.key === "ArrowDown" && selected.r < 8) setSelected({r:selected.r+1, c:selected.c});
-          if (e.key === "ArrowLeft" && selected.c > 0) setSelected({r:selected.r, c:selected.c-1});
-          if (e.key === "ArrowRight" && selected.c < 8) setSelected({r:selected.r, c:selected.c+1});
-          if (e.key === "h" || e.key === "H") requestHint();
+      useEffect(()=>{
+        const handler=(e)=>{
+          if(!selected||!game||solved)return;
+          const n=parseInt(e.key);
+          if(n>=1&&n<=9)handleNumber(n);
+          if(e.key==="Backspace"||e.key==="Delete"||e.key==="0")handleNumber(0);
+          if(e.key==="ArrowUp"&&selected.r>0)setSelected({r:selected.r-1,c:selected.c});
+          if(e.key==="ArrowDown"&&selected.r<8)setSelected({r:selected.r+1,c:selected.c});
+          if(e.key==="ArrowLeft"&&selected.c>0)setSelected({r:selected.r,c:selected.c-1});
+          if(e.key==="ArrowRight"&&selected.c<8)setSelected({r:selected.r,c:selected.c+1});
+          if(e.key==="h"||e.key==="H")requestHint();
+          if(e.key==="n"||e.key==="N")setIsNoteInput(p=>!p);
         };
-        window.addEventListener("keydown", handler);
-        return () => window.removeEventListener("keydown", handler);
+        window.addEventListener("keydown",handler);
+        return ()=>window.removeEventListener("keydown",handler);
       });
 
-      const addMessage = useCallback((text) => {
-        setMessages(prev => {
-          const next = [...prev, { text }];
-          return next.length > 30 ? next.slice(-20) : next;
-        });
-      }, []);
+      const addMsg = useCallback((text)=>{
+        setMessages(prev=>{const next=[...prev,{text}];return next.length>30?next.slice(-20):next;});
+      },[]);
 
-      const startGame = useCallback((diff) => {
-        setGenerating(true);
-        setDifficulty(diff);
-        setTimeout(() => {
-          const { puzzle, solution, given } = generatePuzzle(diff);
-          setGame({ puzzle: deepCopy(puzzle), solution, given, original: deepCopy(puzzle) });
+      const startGame = useCallback((diff)=>{
+        setGenerating(true); setDifficulty(diff);
+        setTimeout(()=>{
+          const {puzzle,solution,given}=generatePuzzle(diff);
+          setGame({puzzle:deepCopy(puzzle),solution,given,original:deepCopy(puzzle)});
           setUserGrid(deepCopy(puzzle));
-          setSelected(null); setHint(null); setErrors(new Set());
-          setHintsUsed(0); setMoveCount(0); setStreak(0); setSolved(false);
-          const diffLabel = diff === "leicht" ? "leichtes" : diff === "mittel" ? "mittleres" : "schweres";
-          const tips = {
-            leicht: "Fang bei de Kästle a wo scho viel drin isch — do findsch am schnellschte **Naked Singles**.",
-            mittel: "Schau zerscht welche Zahl am häufigschte vorkommt ond mach **Cross-Hatching** — Zeile ond Spalte abchecke!",
-            schwer: "Des wird knackig! Du brauchsch all drei Strategie: **Naked Singles**, **Hidden Singles** ond **Cross-Hatching**. Nimm dr Zeit!",
+          setSelected(null);setHint(null);setErrors(new Set());
+          setHintsUsed(0);setMoveCount(0);setStreak(0);setSolved(false);setIsNoteInput(false);
+          setManualNotes(Array.from({length:9},()=>Array.from({length:9},()=>new Set())));
+          const dl=diff==="leicht"?"leichtes":diff==="mittel"?"mittleres":"schweres";
+          const tips={
+            leicht:"Des isch zum Aufwärme — such dir Zeile, Spalte oder Kästle wo bloß noch oi Zahl fehlt. Des send **Naked Singles**, die oifachschte Strategie!",
+            mittel:"Jetzt musch du scho genauer gugge! **Hidden Singles** ond **Cross-Hatching** — welche Zahl kommt am häufigschte vor? Zeile ond Spalte abchecke!",
+            schwer:"Des wird knackig! Du brauchsch au **Naked Pairs** — wenn zwei Felder sich zwei Zahle deile, blockiert des de Rest!",
           };
-          setMessages([{
-            text: `Auf geht's! 🎯 A ${diffLabel} Puzzle — ${given} Zahle vorgegebe, ${81-given} musch du finde. ${tips[diff]}`
-          }]);
+          setMessages([{text:`Auf geht's! 🎯 A ${dl} Puzzle — ${given} Zahle vorgegebe, ${81-given} musch du finde. ${tips[diff]}`}]);
           setGenerating(false);
-        }, 80);
-      }, []);
+        },80);
+      },[]);
 
-      const handleCellClick = useCallback((r, c) => {
-        if (!game || solved) return;
-        setSelected({r, c});
-        setHint(null);
-        // Haptic feedback
-        if (navigator.vibrate) navigator.vibrate(5);
-      }, [game, solved]);
+      const handleCellClick = useCallback((r,c)=>{
+        if(!game||solved)return;
+        setSelected({r,c}); setHint(null);
+        if(navigator.vibrate)navigator.vibrate(5);
+      },[game,solved]);
 
-      const checkComplete = useCallback((grid, solution) => {
-        for (let i = 0; i < 9; i++)
-          for (let j = 0; j < 9; j++)
-            if (grid[i][j] !== solution[i][j]) return false;
+      const checkComplete = useCallback((grid,sol)=>{
+        for(let i=0;i<9;i++)for(let j=0;j<9;j++)if(grid[i][j]!==sol[i][j])return false;
         return true;
-      }, []);
+      },[]);
 
-      const handleNumber = useCallback((n) => {
-        if (!selected || !game || !userGrid || solved) return;
-        const { r, c } = selected;
-        if (game.original[r][c] !== EMPTY) return;
+      const handleNumber = useCallback((n)=>{
+        if(!selected||!game||!userGrid||solved)return;
+        const {r,c}=selected;
+        if(game.original[r][c]!==EMPTY)return;
 
-        const newGrid = deepCopy(userGrid);
-        const newErrors = new Set(errors);
+        // MANUAL NOTE MODE
+        if(isNoteInput && noteMode==="manual" && n!==0) {
+          if(userGrid[r][c]!==EMPTY) return; // can't note a filled cell
+          setManualNotes(prev=>{
+            const next=prev.map(row=>row.map(s=>new Set(s)));
+            if(next[r][c].has(n)) next[r][c].delete(n);
+            else next[r][c].add(n);
+            return next;
+          });
+          if(navigator.vibrate)navigator.vibrate(3);
+          return;
+        }
 
-        if (n === 0) {
-          newGrid[r][c] = EMPTY;
-          newErrors.delete(`${r},${c}`);
+        const newGrid=deepCopy(userGrid);
+        const newErrors=new Set(errors);
+
+        if(n===0){
+          newGrid[r][c]=EMPTY; newErrors.delete(`${r},${c}`);
         } else {
-          newGrid[r][c] = n;
-          setMoveCount(prev => prev + 1);
-          if (game.solution[r][c] !== n) {
-            newErrors.add(`${r},${c}`);
-            setStreak(0);
-            if (navigator.vibrate) navigator.vibrate([20, 30, 20]);
-            if (Math.random() < 0.35) addMessage(randomPick(wrongMessages));
+          newGrid[r][c]=n; setMoveCount(prev=>prev+1);
+          // Clear manual notes for this cell
+          setManualNotes(prev=>{const next=prev.map(row=>row.map(s=>new Set(s)));next[r][c]=new Set();return next;});
+          if(game.solution[r][c]!==n){
+            newErrors.add(`${r},${c}`); setStreak(0);
+            if(navigator.vibrate)navigator.vibrate([20,30,20]);
+            if(Math.random()<0.35)addMsg(rp(wrongMessages));
           } else {
             newErrors.delete(`${r},${c}`);
-            if (navigator.vibrate) navigator.vibrate(3);
-            setStreak(prev => {
-              const s = prev + 1;
-              if (s > 0 && s % 5 === 0) {
-                addMessage(`${randomPick(encouragements)} ${s} richtige in Folge — du bisch am Fließband! 🔥`);
-              }
-              return s;
-            });
+            if(navigator.vibrate)navigator.vibrate(3);
+            setStreak(prev=>{const s=prev+1;if(s>0&&s%5===0)addMsg(`${rp(encouragements)} ${s} richtige in Folge! 🔥`);return s;});
           }
         }
-        setErrors(newErrors);
-        setUserGrid(newGrid);
+        setErrors(newErrors); setUserGrid(newGrid);
 
-        if (n !== 0 && checkComplete(newGrid, game.solution)) {
+        if(n!==0&&checkComplete(newGrid,game.solution)){
           setSolved(true);
-          if (navigator.vibrate) navigator.vibrate([50, 50, 50, 50, 100]);
-          const noHints = hintsUsed === 0;
-          addMessage(`Heiligs Blechle! 🎉🎉🎉 Du hosch es gschafft! ${noHints ? "Ond des ganz ohne Hinweis — Respekt, du bisch a echtr Sudoku-Meischter!" : `Mit ${hintsUsed} Hinweis${hintsUsed>1?"e":""} — trotzdem sauber!`} Bereit für's nächschte? Na los!`);
+          if(navigator.vibrate)navigator.vibrate([50,50,50,50,100]);
+          addMsg(`Heiligs Blechle! 🎉🎉🎉 Du hosch es gschafft! ${hintsUsed===0?"Ganz ohne Hinweis — Respekt!":"Mit "+hintsUsed+" Hinweis"+(hintsUsed>1?"e":"")+" — trotzdem sauber!"} Na los, nächschtes Rätsel!`);
         }
-      }, [selected, game, userGrid, errors, hintsUsed, solved, addMessage, checkComplete]);
+      },[selected,game,userGrid,errors,hintsUsed,solved,addMsg,checkComplete,isNoteInput,noteMode]);
 
-      const requestHint = useCallback(() => {
-        if (!userGrid || !game || solved) return;
-        const cleanGrid = deepCopy(userGrid);
-        for (let r = 0; r < 9; r++)
-          for (let c = 0; c < 9; c++)
-            if (game.original[r][c] === EMPTY && cleanGrid[r][c] !== EMPTY && game.solution[r][c] !== cleanGrid[r][c])
-              cleanGrid[r][c] = EMPTY;
-
-        const h = getHint(cleanGrid);
-        if (h) {
-          setHint(h);
-          setHintsUsed(prev => prev + 1);
-          setSelected({r: h.row, c: h.col});
-          addMessage(`💡 ${h.explanation}`);
+      const requestHint = useCallback(()=>{
+        if(!userGrid||!game||solved)return;
+        const cleanGrid=deepCopy(userGrid);
+        for(let r=0;r<9;r++)for(let c=0;c<9;c++)
+          if(game.original[r][c]===EMPTY&&cleanGrid[r][c]!==EMPTY&&game.solution[r][c]!==cleanGrid[r][c])
+            cleanGrid[r][c]=EMPTY;
+        const h=getHint(cleanGrid);
+        if(h){
+          setHint(h);setHintsUsed(prev=>prev+1);setSelected({r:h.row,c:h.col});
+          addMsg(`💡 ${h.explanation}`);
         } else {
-          addMessage("Hmm, i find grad nix mit de Standard-Strategie. Gugge mol ob du irgendwo a falsche Zahl drin hosch (die rote!) — die blockieret manchmal alles.");
+          addMsg("Hmm, i find grad nix. Gugge ob du falsche Zahle drin hosch (die rote!) — die blockieret manchmal alles.");
         }
-      }, [userGrid, game, solved, addMessage]);
+      },[userGrid,game,solved,addMsg]);
 
-      const applyHint = useCallback(() => {
-        if (!hint || !userGrid || !game) return;
-        const newGrid = deepCopy(userGrid);
-        newGrid[hint.row][hint.col] = hint.value;
+      const applyHint = useCallback(()=>{
+        if(!hint||!userGrid||!game)return;
+        const newGrid=deepCopy(userGrid);
+        newGrid[hint.row][hint.col]=hint.value;
         setUserGrid(newGrid);
-        const newErrors = new Set(errors);
-        newErrors.delete(`${hint.row},${hint.col}`);
-        setErrors(newErrors);
-        const appliedHint = hint;
-        setHint(null);
-        addMessage(`So, ${appliedHint.value} isch gsetzt! ✓ Jetzt check mol drumrum — a neue Zahl löst oft de nächschte aus. Des isch dr **Ripple-Effekt**!`);
-
-        if (checkComplete(newGrid, game.solution)) {
+        const ne=new Set(errors);ne.delete(`${hint.row},${hint.col}`);setErrors(ne);
+        // Clear notes for that cell
+        setManualNotes(prev=>{const n=prev.map(row=>row.map(s=>new Set(s)));n[hint.row][hint.col]=new Set();return n;});
+        const applied=hint; setHint(null);
+        addMsg(`So, ${applied.value} isch gsetzt! ✓ Check drumrum — des isch dr **Ripple-Effekt**!`);
+        if(checkComplete(newGrid,game.solution)){
           setSolved(true);
-          if (navigator.vibrate) navigator.vibrate([50, 50, 50, 50, 100]);
-          addMessage(`Heiligs Blechle! 🎉🎉🎉 Fertig! Des war dr letzte Zug!`);
+          if(navigator.vibrate)navigator.vibrate([50,50,50,50,100]);
+          addMsg(`Heiligs Blechle! 🎉🎉🎉 Fertig!`);
         }
-      }, [hint, userGrid, game, errors, addMessage, checkComplete]);
+      },[hint,userGrid,game,errors,addMsg,checkComplete]);
 
-      // Cell state helpers
-      const getCellHighlight = (r, c) => {
-        if (!hint) return null;
-        for (const h of hint.highlight) if (h.r === r && h.c === c) return h.type;
-        return null;
+      const getCellHighlight=(r,c)=>{if(!hint)return null;for(const h of hint.highlight)if(h.r===r&&h.c===c)return h.type;return null;};
+      const isSelected=(r,c)=>selected&&selected.r===r&&selected.c===c;
+      const isSameRowColBox=(r,c)=>{
+        if(!selected)return false;
+        return r===selected.r||c===selected.c||(Math.floor(r/3)===Math.floor(selected.r/3)&&Math.floor(c/3)===Math.floor(selected.c/3));
       };
-      const isSelected = (r, c) => selected && selected.r === r && selected.c === c;
-      const isSameRowColBox = (r, c) => {
-        if (!selected) return false;
-        return r === selected.r || c === selected.c ||
-          (Math.floor(r/3) === Math.floor(selected.r/3) && Math.floor(c/3) === Math.floor(selected.c/3));
-      };
-      const isSameNumber = (r, c) => {
-        if (!selected || !userGrid) return false;
-        const sv = userGrid[selected.r][selected.c];
-        return sv !== EMPTY && userGrid[r][c] === sv;
+      const isSameNumber=(r,c)=>{
+        if(!selected||!userGrid)return false;
+        const sv=userGrid[selected.r][selected.c];
+        return sv!==EMPTY&&userGrid[r][c]===sv;
       };
 
-      const numberCounts = useMemo(() => {
-        const counts = Array(10).fill(0);
-        if (userGrid) for (let r=0;r<9;r++) for (let c=0;c<9;c++) if (userGrid[r][c]!==EMPTY) counts[userGrid[r][c]]++;
-        return counts;
-      }, [userGrid]);
+      const numberCounts=useMemo(()=>{
+        const c=Array(10).fill(0);
+        if(userGrid)for(let r=0;r<9;r++)for(let c2=0;c2<9;c2++)if(userGrid[r][c2]!==EMPTY)c[userGrid[r][c2]]++;
+        return c;
+      },[userGrid]);
 
-      // Layout: use dvh for mobile viewport
+      const gw = `min(${gridScale}vw, ${Math.round(gridScale*4.5)}px)`;
+
       return (
-        <div ref={appRef} style={{
-          height: "100dvh", width: "100vw",
-          display: "flex", flexDirection: "column", alignItems: "center",
-          justifyContent: "space-between",
-          padding: "env(safe-area-inset-top, 8px) 8px env(safe-area-inset-bottom, 8px) 8px",
-          overflow: "hidden",
+        <div style={{
+          height:"100dvh", width:"100vw",
+          display:"flex", flexDirection:"column", alignItems:"center",
+          justifyContent:"flex-start",
+          padding:`env(safe-area-inset-top, 6px) 8px env(safe-area-inset-bottom, 6px) 8px`,
+          overflow:"hidden", gap:"6px",
         }}>
+          {showSettings && <SettingsPanel
+            highlightsOn={highlightsOn} setHighlightsOn={setHighlightsOn}
+            noteMode={noteMode} setNoteMode={setNoteMode}
+            gridScale={gridScale} setGridScale={setGridScale}
+            onClose={()=>setShowSettings(false)} />}
+
           {/* Header */}
-          <div style={{ textAlign: "center", flexShrink: 0, padding: "4px 0" }}>
-            <h1 style={{
-              fontSize: "clamp(1.1rem, 4vw, 1.5rem)", fontWeight: 800, margin: 0,
-              background: `linear-gradient(135deg, ${C.accent}, ${C.swabian})`,
-              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-              letterSpacing: "0.1em",
-            }}>数独 SUDOKU-MEISCHTER</h1>
-            <p style={{
-              fontSize: "0.55rem", color: C.textDim, margin: 0,
-              letterSpacing: "0.15em", fontStyle: "italic",
-            }}>schwäbisch denke · logisch löse</p>
+          <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", width:gw, flexShrink:0}}>
+            <div>
+              <h1 style={{
+                fontSize:"clamp(1rem, 3.5vw, 1.3rem)", fontWeight:800, margin:0,
+                background:`linear-gradient(135deg, ${C.accent}, ${C.swabian})`,
+                WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
+                letterSpacing:"0.08em",
+              }}>数独 SUDOKU-MEISCHTER</h1>
+              <p style={{fontSize:"0.5rem",color:C.textDim,margin:0,letterSpacing:"0.12em",fontStyle:"italic"}}>
+                schwäbisch denke · logisch löse
+              </p>
+            </div>
+            <button onClick={()=>setShowSettings(true)} style={{
+              background:C.cellBg, borderRadius:"8px", padding:"6px 10px",
+              color:C.textDim, fontSize:"1.1rem", border:`1px solid ${C.gridLine}`,
+            }}>⚙️</button>
           </div>
 
           {/* Grid */}
           <div style={{
-            width: "min(88vw, 400px)", aspectRatio: "1",
-            display: "grid", gridTemplateColumns: "repeat(9,1fr)", gridTemplateRows: "repeat(9,1fr)",
-            border: `2.5px solid ${C.gridBold}`, borderRadius: "5px", overflow: "hidden",
-            boxShadow: "0 0 40px rgba(100,255,218,0.06)",
-            flexShrink: 0,
+            width:gw, aspectRatio:"1",
+            display:"grid", gridTemplateColumns:"repeat(9,1fr)", gridTemplateRows:"repeat(9,1fr)",
+            border:`2.5px solid ${C.gridBold}`, borderRadius:"5px", overflow:"hidden",
+            boxShadow:"0 0 40px rgba(100,255,218,0.06)", flexShrink:0,
           }}>
-            {Array.from({length:81}).map((_,idx) => {
-              const r = Math.floor(idx/9), c = idx%9;
-              const val = userGrid ? userGrid[r][c] : 0;
-              const isGiven = game ? game.original[r][c] !== EMPTY : false;
+            {Array.from({length:81}).map((_,idx)=>{
+              const r=Math.floor(idx/9),c=idx%9;
+              const val=userGrid?userGrid[r][c]:0;
+              const isGiven=game?game.original[r][c]!==EMPTY:false;
               return <Cell key={idx} r={r} c={c} val={val} isGiven={isGiven}
                 hasError={errors.has(`${r},${c}`)}
                 sel={isSelected(r,c)} sameUnit={isSameRowColBox(r,c)}
                 sameNum={isSameNumber(r,c)} hlType={getCellHighlight(r,c)}
-                candidates={showCandidates && userGrid && val===EMPTY ? getCandidates(userGrid,r,c) : null}
-                onClick={() => handleCellClick(r,c)}
+                candidates={noteMode==="auto"&&userGrid&&val===EMPTY?getCandidates(userGrid,r,c):null}
+                manualNotes={noteMode==="manual"&&val===EMPTY?manualNotes[r][c]:null}
+                highlightsOn={highlightsOn}
+                onClick={()=>handleCellClick(r,c)}
               />;
             })}
           </div>
 
           {/* Number Pad */}
           <div style={{
-            display: "grid", gridTemplateColumns: "repeat(10,1fr)", gap: "4px",
-            width: "min(88vw, 400px)", flexShrink: 0, padding: "2px 0",
+            display:"grid", gridTemplateColumns:"repeat(10,1fr)", gap:"3px",
+            width:gw, flexShrink:0,
           }}>
-            {[1,2,3,4,5,6,7,8,9].map(n => {
-              const done = numberCounts[n] >= 9;
+            {[1,2,3,4,5,6,7,8,9].map(n=>{
+              const done=numberCounts[n]>=9;
               return (
-                <button key={n} onClick={() => handleNumber(n)}
-                  style={{
-                    height: "clamp(38px, 9vw, 48px)",
-                    background: done ? "transparent" : C.surface,
-                    border: `1px solid ${done ? "transparent" : C.accentDim}`,
-                    borderRadius: "6px", color: done ? C.textDim : C.accent,
-                    fontSize: "clamp(0.9rem, 4vw, 1.3rem)", fontWeight: 600,
-                    opacity: done ? 0.2 : 1, touchAction: "manipulation",
-                  }}
-                >{n}</button>
+                <button key={n} onClick={()=>handleNumber(n)} style={{
+                  height:"clamp(36px, 8.5vw, 46px)",
+                  background:done?"transparent":isNoteInput?"rgba(255,179,71,0.08)":C.surface,
+                  border:`1px solid ${done?"transparent":isNoteInput?C.swabian:C.accentDim}`,
+                  borderRadius:"6px", color:done?C.textDim:isNoteInput?C.swabian:C.accent,
+                  fontSize:"clamp(0.85rem, 4vw, 1.2rem)", fontWeight:600,
+                  opacity:done?0.2:1, touchAction:"manipulation",
+                }}>{n}</button>
               );
             })}
-            <button onClick={() => handleNumber(0)}
-              style={{
-                height: "clamp(38px, 9vw, 48px)",
-                background: C.surface, border: `1px solid ${C.gridLine}`,
-                borderRadius: "6px", color: C.textDim,
-                fontSize: "clamp(0.8rem, 3vw, 1rem)", touchAction: "manipulation",
-              }}>✕</button>
+            <button onClick={()=>handleNumber(0)} style={{
+              height:"clamp(36px, 8.5vw, 46px)",
+              background:C.surface, border:`1px solid ${C.gridLine}`,
+              borderRadius:"6px", color:C.textDim,
+              fontSize:"clamp(0.7rem, 3vw, 0.9rem)", touchAction:"manipulation",
+            }}>✕</button>
           </div>
 
           {/* Action Buttons */}
-          <div style={{
-            display: "flex", gap: "5px", width: "min(88vw, 400px)", flexShrink: 0,
-          }}>
-            <button onClick={requestHint} disabled={!game || solved}
-              style={{
-                flex: 3, padding: "10px 0",
-                background: game && !solved ? `linear-gradient(135deg, ${C.accentDim}, #1a5a4a)` : C.surface,
-                borderRadius: "8px", color: game && !solved ? C.accent : C.textDim,
-                fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em",
-                opacity: game && !solved ? 1 : 0.4, touchAction: "manipulation",
-              }}>💡 HINWEIS</button>
-            {hint && (
-              <button onClick={applyHint}
-                style={{
-                  flex: 2, padding: "10px 0",
-                  background: "linear-gradient(135deg, #5a4a1a, #3a3510)",
-                  borderRadius: "8px", color: C.hint,
-                  fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.06em",
-                  touchAction: "manipulation",
-                }}>✓ EISETZE</button>
+          <div style={{display:"flex", gap:"4px", width:gw, flexShrink:0}}>
+            <button onClick={requestHint} disabled={!game||solved} style={{
+              flex:3, padding:"9px 0",
+              background:game&&!solved?`linear-gradient(135deg,${C.accentDim},#1a5a4a)`:C.surface,
+              borderRadius:"8px", color:game&&!solved?C.accent:C.textDim,
+              fontSize:"0.7rem", fontWeight:700, letterSpacing:"0.06em",
+              opacity:game&&!solved?1:0.4, touchAction:"manipulation",
+            }}>💡 HINWEIS</button>
+            {hint && <button onClick={applyHint} style={{
+              flex:2, padding:"9px 0",
+              background:"linear-gradient(135deg,#5a4a1a,#3a3510)",
+              borderRadius:"8px", color:C.hint,
+              fontSize:"0.7rem", fontWeight:700, touchAction:"manipulation",
+            }}>✓ EISETZE</button>}
+            {noteMode==="manual" && (
+              <button onClick={()=>setIsNoteInput(p=>!p)} style={{
+                flex:2, padding:"9px 0",
+                background:isNoteInput?"rgba(255,179,71,0.15)":C.surface,
+                border:`1px solid ${isNoteInput?C.swabian:C.gridLine}`,
+                borderRadius:"8px", color:isNoteInput?C.swabian:C.textDim,
+                fontSize:"0.65rem", fontWeight:isNoteInput?700:400, touchAction:"manipulation",
+              }}>{isNoteInput?"✏️ NOTIZ AN":"✏️ NOTIZ"}</button>
             )}
-            <button onClick={() => setShowCandidates(p => !p)}
-              style={{
-                flex: 2, padding: "10px 0",
-                background: showCandidates ? C.accentDim : C.surface,
-                border: `1px solid ${showCandidates ? C.accent : C.gridLine}`,
-                borderRadius: "8px", color: showCandidates ? C.accent : C.textDim,
-                fontSize: "0.68rem", letterSpacing: "0.05em", touchAction: "manipulation",
-              }}>{showCandidates ? "▣ NOTIZE" : "▢ NOTIZE"}</button>
           </div>
 
+          {/* Spacer to prevent mis-taps */}
+          <div style={{height:"4px", flexShrink:0}}/>
+
           {/* Teacher Messages */}
-          <div className="messages" style={{
-            width: "min(88vw, 400px)", flex: "1 1 auto",
-            background: C.surface, borderRadius: "10px",
-            border: `1px solid rgba(255,179,71,0.15)`,
-            overflowY: "auto", minHeight: 0,
-            touchAction: "pan-y",
+          <div className="msgs" style={{
+            width:gw, flex:"1 1 auto",
+            background:C.surface, borderRadius:"10px",
+            border:`1px solid rgba(255,179,71,0.15)`,
+            overflowY:"auto", minHeight:0, touchAction:"pan-y",
           }}>
-            {messages.map((msg, i) => (
+            {messages.map((msg,i)=>(
               <div key={i} style={{
-                padding: "8px 12px",
-                borderBottom: i < messages.length-1 ? `1px solid rgba(255,179,71,0.08)` : "none",
-                fontSize: "clamp(0.65rem, 2.5vw, 0.75rem)", lineHeight: 1.5,
+                padding:"8px 12px",
+                borderBottom:i<messages.length-1?`1px solid rgba(255,179,71,0.08)`:"none",
+                fontSize:"clamp(0.63rem, 2.3vw, 0.73rem)", lineHeight:1.55,
               }}>
-                <span style={{
-                  color: C.swabian, fontWeight: 800, fontSize: "0.58rem", letterSpacing: "0.08em",
-                }}>MEISCHTER: </span>
-                {msg.text.split("**").map((part, j) =>
-                  j%2===1 ? <strong key={j} style={{color: C.accent}}>{part}</strong>
-                    : <span key={j}>{part}</span>
+                <span style={{color:C.swabian,fontWeight:800,fontSize:"0.56rem",letterSpacing:"0.08em"}}>MEISCHTER: </span>
+                {msg.text.split("**").map((part,j)=>
+                  j%2===1?<strong key={j} style={{color:C.accent}}>{part}</strong>:<span key={j}>{part}</span>
                 )}
               </div>
             ))}
-            <div ref={messagesEndRef} />
+            <div ref={messagesEndRef}/>
           </div>
 
           {/* New Game + Stats */}
-          <div style={{ width: "min(88vw, 400px)", flexShrink: 0 }}>
-            <div style={{ display: "flex", gap: "5px", marginBottom: "4px" }}>
-              {[
-                { key: "leicht", label: "LEICHT", emoji: "🌱" },
-                { key: "mittel", label: "MITTEL", emoji: "🔥" },
-                { key: "schwer", label: "SCHWER", emoji: "💀" },
-              ].map(({ key, label, emoji }) => (
-                <button key={key} onClick={() => startGame(key)} disabled={generating}
-                  style={{
-                    flex: 1, padding: "10px 0",
-                    background: difficulty === key && game ? "rgba(255,179,71,0.12)" : C.surface,
-                    border: `1px solid ${difficulty === key && game ? C.swabian : C.gridLine}`,
-                    borderRadius: "8px", color: difficulty === key && game ? C.swabian : C.textDim,
-                    fontSize: "0.63rem", fontWeight: 700, letterSpacing: "0.1em",
-                    touchAction: "manipulation",
-                  }}>{generating && difficulty === key ? "⏳" : `${emoji} ${label}`}</button>
+          <div style={{width:gw, flexShrink:0, paddingBottom:"2px"}}>
+            <div style={{display:"flex", gap:"4px", marginBottom:"3px"}}>
+              {[{key:"leicht",label:"LEICHT",emoji:"🌱"},{key:"mittel",label:"MITTEL",emoji:"🔥"},{key:"schwer",label:"SCHWER",emoji:"💀"}].map(({key,label,emoji})=>(
+                <button key={key} onClick={()=>startGame(key)} disabled={generating} style={{
+                  flex:1, padding:"9px 0",
+                  background:difficulty===key&&game?"rgba(255,179,71,0.12)":C.surface,
+                  border:`1px solid ${difficulty===key&&game?C.swabian:C.gridLine}`,
+                  borderRadius:"8px", color:difficulty===key&&game?C.swabian:C.textDim,
+                  fontSize:"0.6rem", fontWeight:700, letterSpacing:"0.1em",
+                  touchAction:"manipulation",
+                }}>{generating&&difficulty===key?"⏳":`${emoji} ${label}`}</button>
               ))}
             </div>
-            {game && (
-              <div style={{
-                display: "flex", justifyContent: "center", gap: "14px",
-                fontSize: "0.52rem", color: C.textDim, letterSpacing: "0.06em",
-                paddingBottom: "2px",
-              }}>
-                <span>ZÜG {moveCount}</span>
-                <span>HINWEIS {hintsUsed}</span>
-                <span>SERIE {streak}🔥</span>
-                <span>VORGABE {game.given}</span>
-              </div>
-            )}
+            {game&&<div style={{
+              display:"flex", justifyContent:"center", gap:"12px",
+              fontSize:"0.5rem", color:C.textDim, letterSpacing:"0.06em",
+            }}>
+              <span>ZÜG {moveCount}</span>
+              <span>HINWEIS {hintsUsed}</span>
+              <span>SERIE {streak}🔥</span>
+              <span>VORGABE {game.given}</span>
+              {!highlightsOn&&<span>🧠</span>}
+            </div>}
           </div>
         </div>
       );
     }
 
-    // ============================================================
-    // MOUNT
-    // ============================================================
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<SudokuMeischter />);
+    root.render(<App />);
   </script>
 </body>
 </html>
